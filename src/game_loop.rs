@@ -6,6 +6,7 @@ use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 
 use crate::app::{App, AppState, MenuOption, MENU_OPTIONS};
+use crate::audio::music::Track;
 use crate::input::controls::StickState;
 use crate::physics::drone::{physics_step, DroneState};
 use crate::render::camera;
@@ -49,6 +50,14 @@ pub fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> 
         app.resize_framebuffer(size.width, size.height);
 
         // State dispatch
+        // Music follows state
+        if let Some(ref mut sound) = app.sound {
+            match app.state {
+                AppState::Menu | AppState::AxisMapping => sound.play(Track::Menu),
+                AppState::Flying => sound.play(Track::Flight),
+            }
+        }
+
         match app.state {
             AppState::Menu => {
                 handle_menu_input(app);
@@ -61,7 +70,7 @@ pub fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> 
             AppState::Flying => {
                 handle_flying_input(app, frame_time, &mut accumulator);
                 if app.state == AppState::Menu {
-                    continue; // went back to menu
+                    continue;
                 }
                 run_flying_frame(app, &mut accumulator);
                 render_frame(terminal, app, size)?;
@@ -139,6 +148,7 @@ fn handle_flying_input(app: &mut App, frame_time: f32, _accumulator: &mut f32) {
     if app.input.was_pressed(KeyCode::Esc) || app.input.was_pressed(KeyCode::Char('q')) {
         app.state = AppState::Menu;
         app.needs_clear = true;
+        app.input.pressed.clear();
         return;
     }
 
@@ -223,6 +233,7 @@ fn handle_axis_mapping_input(app: &mut App) {
         } else {
             app.state = AppState::Menu;
             app.needs_clear = true;
+            app.input.pressed.clear(); // don't let Esc leak into menu
         }
         return;
     }
@@ -314,7 +325,11 @@ fn render_pixel_hud(
     let w = fb.width as i32;
     let h = fb.height as i32;
 
-    let scale = if w >= 900 { 3 } else if w >= 450 { 2 } else { 1 };
+    // Scale based on terminal columns (not pixel width) so the HUD looks
+    // the same size regardless of render mode's pixel multiplier.
+    let (px_w, _) = render_mode.cell_pixels();
+    let term_cols = w / px_w.max(1) as i32;
+    let scale = if term_cols >= 200 { 3 } else if term_cols >= 100 { 2 } else { 1 };
     let char_w = 8 * scale as i32;
     let pad = scale as i32 * 2;
 

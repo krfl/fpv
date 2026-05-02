@@ -12,6 +12,7 @@ use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 
 mod app;
+mod audio;
 mod game_loop;
 mod input;
 mod physics;

@@ -1,3 +1,4 @@
+use crate::audio::music::SoundManager;
 use crate::input::controls::InputState;
 use crate::input::gamepad::GamepadInput;
 use crate::physics::drone::{DroneConfig, DroneState};
@@ -52,6 +53,7 @@ pub struct App {
     pub axis_map_listening: bool,
     pub needs_clear: bool,
     pub kitty_supported: bool,
+    pub sound: Option<SoundManager>,
 }
 
 impl App {
@@ -77,6 +79,7 @@ impl App {
             axis_map_listening: false,
             needs_clear: false,
             kitty_supported,
+            sound: SoundManager::new(),
         }
     }
 
