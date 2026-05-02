@@ -22,15 +22,15 @@ impl Default for DroneConfig {
     fn default() -> Self {
         Self {
             mass: 0.150,
-            max_thrust: 4.8,   // ~12% throttle to hover, punchy acceleration
-            drag_coeff: 0.8,   // higher drag = lower top speed
-            angular_drag_coeff: 0.05,
-            rate_tracking_speed: 20.0,
+            max_thrust: 4.8,
+            drag_coeff: 0.6,   // less drag = higher top speed
+            angular_drag_coeff: 0.04,
+            rate_tracking_speed: 25.0, // snappier rate tracking
             camera_tilt_deg: 30.0,
-            max_rate_deg_s: 180.0, // slower rotation
-            rc_rate: 0.8,
-            expo: 0.4,         // more expo = softer center stick
-            super_rate: 0.5,
+            max_rate_deg_s: 250.0, // faster flips and rolls
+            rc_rate: 0.9,
+            expo: 0.35,
+            super_rate: 0.6,
         }
     }
 }

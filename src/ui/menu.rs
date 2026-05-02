@@ -3,7 +3,7 @@ use crate::render::font;
 use crate::render::framebuffer::{Color, Framebuffer};
 
 /// Render the main menu into the framebuffer using the bitmap font.
-pub fn render_menu(fb: &mut Framebuffer, selection: usize, options: &[MenuOption]) {
+pub fn render_menu(fb: &mut Framebuffer, selection: usize, options: &[MenuOption], muted: bool) {
     fb.color.fill(Color::new(10, 10, 25));
 
     let w = fb.width as i32;
@@ -16,7 +16,7 @@ pub fn render_menu(fb: &mut Framebuffer, selection: usize, options: &[MenuOption
     // "  RANDOM COURSE" = 15 chars is the widest menu item
     // Title "FPV SIM" = 7 chars at title_scale = scale+1
     let max_chars = 17; // widest line including prefix
-    let scale: u32 = ((w as u32) / (max_chars * 8)).min(3).max(1);
+    let scale: u32 = ((w as u32 * 36 / 100) / (max_chars * 8)).clamp(1, 3);
     let title_scale = scale;
     let char_w = 8 * scale as i32;
     let title_char_w = 8 * title_scale as i32;
@@ -40,7 +40,12 @@ pub fn render_menu(fb: &mut Framebuffer, selection: usize, options: &[MenuOption
     let menu_start = (sub_y + scale as i32 * 12 + h - menu_height) / 2;
 
     for (i, option) in options.iter().enumerate() {
-        let label = option.label();
+        let label = match option {
+            MenuOption::ToggleMusic => if muted { "MUSIC: OFF" } else { "MUSIC: ON" },
+            MenuOption::Play => "PLAY",
+            MenuOption::AxisMapping => "AXIS MAPPING",
+            MenuOption::Quit => "QUIT",
+        };
         let prefix = if i == selection { "> " } else { "  " };
         let text = format!("{}{}", prefix, label);
         let text_px = text.len() as i32 * char_w;

@@ -17,21 +17,13 @@ pub enum AppState {
 pub enum MenuOption {
     Play,
     AxisMapping,
+    ToggleMusic,
     Quit,
-}
-
-impl MenuOption {
-    pub fn label(self) -> &'static str {
-        match self {
-            MenuOption::Play => "PLAY",
-            MenuOption::AxisMapping => "AXIS MAPPING",
-            MenuOption::Quit => "QUIT",
-        }
-    }
 }
 
 pub const MENU_OPTIONS: &[MenuOption] = &[
     MenuOption::Play,
+    MenuOption::ToggleMusic,
     MenuOption::AxisMapping,
     MenuOption::Quit,
 ];
@@ -54,6 +46,8 @@ pub struct App {
     pub needs_clear: bool,
     pub kitty_supported: bool,
     pub sound: Option<SoundManager>,
+    pub muted: bool,
+    pub flight_controls_armed: bool,
 }
 
 impl App {
@@ -80,12 +74,16 @@ impl App {
             needs_clear: false,
             kitty_supported,
             sound: SoundManager::new(),
+            muted: false,
+            flight_controls_armed: false,
         }
     }
 
     pub fn reset(&mut self) {
         self.drone = DroneState::new(self.scene.spawn_position, self.scene.spawn_orientation);
         self.flight_time = 0.0;
+        self.input.sticks = crate::input::controls::StickState::default();
+        self.flight_controls_armed = false;
     }
 
     pub fn resize_framebuffer(&mut self, term_cols: u16, term_rows: u16) {

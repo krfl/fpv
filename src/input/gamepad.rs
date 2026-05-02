@@ -1,4 +1,7 @@
 use gilrs::{Axis, EventType, Gilrs};
+use std::collections::HashMap;
+use std::fs;
+use std::path::PathBuf;
 
 use super::controls::StickState;
 
@@ -29,6 +32,52 @@ impl Default for AxisMapping {
     }
 }
 
+fn config_path() -> PathBuf {
+    let mut path = dirs_home().unwrap_or_else(|| PathBuf::from("."));
+    path.push(".config");
+    path.push("fpv");
+    path
+}
+
+fn config_file() -> PathBuf {
+    config_path().join("axes.conf")
+}
+
+fn dirs_home() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+}
+
+fn axis_to_str(axis: &Axis) -> String {
+    match axis {
+        Axis::LeftStickX => "LeftStickX".into(),
+        Axis::LeftStickY => "LeftStickY".into(),
+        Axis::RightStickX => "RightStickX".into(),
+        Axis::RightStickY => "RightStickY".into(),
+        Axis::LeftZ => "LeftZ".into(),
+        Axis::RightZ => "RightZ".into(),
+        Axis::DPadX => "DPadX".into(),
+        Axis::DPadY => "DPadY".into(),
+        Axis::Unknown => "Unknown".into(),
+    }
+}
+
+fn str_to_axis(s: &str) -> Option<Axis> {
+    match s.trim() {
+        "LeftStickX" => Some(Axis::LeftStickX),
+        "LeftStickY" => Some(Axis::LeftStickY),
+        "RightStickX" => Some(Axis::RightStickX),
+        "RightStickY" => Some(Axis::RightStickY),
+        "LeftZ" => Some(Axis::LeftZ),
+        "RightZ" => Some(Axis::RightZ),
+        "DPadX" => Some(Axis::DPadX),
+        "DPadY" => Some(Axis::DPadY),
+        "Unknown" => Some(Axis::Unknown),
+        _ => None,
+    }
+}
+
 impl AxisMapping {
     /// Get assignment by index (0=throttle, 1=yaw, 2=pitch, 3=roll).
     pub fn get_mut(&mut self, index: usize) -> &mut AxisAssignment {
@@ -40,16 +89,63 @@ impl AxisMapping {
             _ => panic!("invalid axis index"),
         }
     }
+
+    /// Save axis mapping to config file.
+    pub fn save(&self) {
+        let dir = config_path();
+        let _ = fs::create_dir_all(&dir);
+
+        let content = format!(
+            "throttle={},{}\nyaw={},{}\npitch={},{}\nroll={},{}\n",
+            axis_to_str(&self.throttle.axis), self.throttle.inverted,
+            axis_to_str(&self.yaw.axis), self.yaw.inverted,
+            axis_to_str(&self.pitch.axis), self.pitch.inverted,
+            axis_to_str(&self.roll.axis), self.roll.inverted,
+        );
+
+        let _ = fs::write(config_file(), content);
+    }
+
+    /// Load axis mapping from config file. Returns default if not found.
+    pub fn load() -> Self {
+        let content = match fs::read_to_string(config_file()) {
+            Ok(c) => c,
+            Err(_) => return Self::default(),
+        };
+
+        let mut mapping = Self::default();
+
+        for line in content.lines() {
+            let Some((key, rest)) = line.split_once('=') else { continue };
+            let Some((axis_str, inv_str)) = rest.rsplit_once(',') else { continue };
+            let Some(axis) = str_to_axis(axis_str) else { continue };
+            let inverted = inv_str.trim() == "true";
+            let assignment = AxisAssignment { axis, inverted };
+
+            match key.trim() {
+                "throttle" => mapping.throttle = assignment,
+                "yaw" => mapping.yaw = assignment,
+                "pitch" => mapping.pitch = assignment,
+                "roll" => mapping.roll = assignment,
+                _ => {}
+            }
+        }
+
+        mapping
+    }
 }
 
 /// All axes we check when listening for stick input.
-pub const ALL_AXES: [Axis; 6] = [
+#[allow(dead_code)]
+pub const ALL_AXES: [Axis; 8] = [
     Axis::LeftStickX,
     Axis::LeftStickY,
     Axis::RightStickX,
     Axis::RightStickY,
     Axis::LeftZ,
     Axis::RightZ,
+    Axis::DPadX,
+    Axis::DPadY,
 ];
 
 /// Manages gamepad/radio controller input via gilrs.
@@ -59,6 +155,8 @@ pub struct GamepadInput {
     pub name: String,
     pub sticks: StickState,
     pub mapping: AxisMapping,
+    /// Last known values for ALL axes seen via events (including unmapped ones).
+    pub live_axes: HashMap<Axis, f32>,
 }
 
 impl GamepadInput {
@@ -67,10 +165,9 @@ impl GamepadInput {
 
         let mut connected = false;
         let mut name = String::new();
-        for (_id, gamepad) in gilrs.gamepads() {
+        if let Some((_id, gamepad)) = gilrs.gamepads().next() {
             connected = true;
             name = gamepad.name().to_string();
-            break;
         }
 
         Some(Self {
@@ -78,15 +175,14 @@ impl GamepadInput {
             connected,
             name,
             sticks: StickState::default(),
-            mapping: AxisMapping::default(),
+            mapping: AxisMapping::load(),
+            live_axes: HashMap::new(),
         })
     }
 
-    fn read_axis(&self, gamepad: &gilrs::Gamepad, assignment: &AxisAssignment) -> f32 {
-        let val = gamepad
-            .axis_data(assignment.axis)
-            .map(|a| a.value())
-            .unwrap_or(0.0);
+    fn read_axis(&self, assignment: &AxisAssignment) -> f32 {
+        // Read from live_axes (populated by events) — works for all axes including Unknown
+        let val = self.live_axes.get(&assignment.axis).copied().unwrap_or(0.0);
         if assignment.inverted { -val } else { val }
     }
 
@@ -103,6 +199,9 @@ impl GamepadInput {
                     self.connected = false;
                     self.name.clear();
                 }
+                EventType::AxisChanged(axis, value, _) => {
+                    self.live_axes.insert(axis, value);
+                }
                 _ => {}
             }
         }
@@ -111,44 +210,40 @@ impl GamepadInput {
             return false;
         }
 
-        if let Some((_id, gamepad)) = self.gilrs.gamepads().next() {
-            if !gamepad.is_connected() {
-                self.connected = false;
-                return false;
-            }
+        // Read all axes from event-based live values (works for Unknown axes too)
+        let raw_throttle = self.read_axis(&self.mapping.throttle.clone());
+        self.sticks.throttle = (raw_throttle * 0.5 + 0.5).clamp(0.0, 1.0);
+        self.sticks.yaw = self.read_axis(&self.mapping.yaw.clone());
+        self.sticks.pitch = self.read_axis(&self.mapping.pitch.clone());
+        self.sticks.roll = self.read_axis(&self.mapping.roll.clone());
 
-            let raw_throttle = self.read_axis(&gamepad, &self.mapping.throttle.clone());
-            self.sticks.throttle = (raw_throttle * 0.5 + 0.5).clamp(0.0, 1.0);
-            self.sticks.yaw = self.read_axis(&gamepad, &self.mapping.yaw.clone());
-            self.sticks.pitch = self.read_axis(&gamepad, &self.mapping.pitch.clone());
-            self.sticks.roll = self.read_axis(&gamepad, &self.mapping.roll.clone());
-
-            true
-        } else {
-            false
-        }
+        true
     }
 
-    /// Find the axis with the largest deflection (for axis mapping detection).
-    /// Returns Some(axis) if any axis exceeds the threshold.
+    /// Get all axis values for the debug display (from events, catches everything).
+    pub fn all_axis_values(&self) -> Vec<(Axis, f32)> {
+        let mut result: Vec<(Axis, f32)> = self
+            .live_axes
+            .iter()
+            .filter(|(_, v)| v.abs() > 0.01)
+            .map(|(&a, &v)| (a, v))
+            .collect();
+        result.sort_by(|a, b| format!("{:?}", a.0).cmp(&format!("{:?}", b.0)));
+        result
+    }
+
+    /// Find the axis with the largest deflection (from events, catches everything).
     pub fn detect_axis(&self) -> Option<Axis> {
-        if let Some((_id, gamepad)) = self.gilrs.gamepads().next() {
-            let mut best_axis = None;
-            let mut best_val = 0.5; // threshold
+        let mut best_axis = None;
+        let mut best_val = 0.5f32;
 
-            for &axis in &ALL_AXES {
-                if let Some(data) = gamepad.axis_data(axis) {
-                    let val = data.value().abs();
-                    if val > best_val {
-                        best_val = val;
-                        best_axis = Some(axis);
-                    }
-                }
+        for (&axis, &value) in &self.live_axes {
+            if value.abs() > best_val {
+                best_val = value.abs();
+                best_axis = Some(axis);
             }
-
-            best_axis
-        } else {
-            None
         }
+
+        best_axis
     }
 }

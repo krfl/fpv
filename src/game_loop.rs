@@ -50,13 +50,18 @@ pub fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> 
         app.resize_framebuffer(size.width, size.height);
 
         // State dispatch
-        // Music follows state
-        if let Some(ref mut sound) = app.sound {
-            match app.state {
-                AppState::Menu | AppState::AxisMapping => sound.play(Track::Menu),
-                AppState::Flying => sound.play(Track::Flight),
+        // Music follows state (unless muted)
+        if !app.muted {
+            if let Some(ref mut sound) = app.sound {
+                match app.state {
+                    AppState::Menu | AppState::AxisMapping => sound.play(Track::Menu),
+                    AppState::Flying => sound.play(Track::Flight),
+                }
             }
         }
+
+        // Save state before input handling to detect transitions
+        let state_before = app.state;
 
         match app.state {
             AppState::Menu => {
@@ -64,22 +69,31 @@ pub fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> 
                 if !app.running {
                     break;
                 }
-                menu::render_menu(&mut app.framebuffer, app.menu_selection, MENU_OPTIONS);
-                render_frame(terminal, app, size)?;
             }
             AppState::Flying => {
                 handle_flying_input(app, frame_time, &mut accumulator);
-                if app.state == AppState::Menu {
-                    continue;
-                }
+            }
+            AppState::AxisMapping => {
+                handle_axis_mapping_input(app);
+            }
+        }
+
+        // If state changed, skip rendering this frame (clear already handled)
+        if app.state != state_before {
+            continue;
+        }
+
+        // Render current state
+        match app.state {
+            AppState::Menu => {
+                menu::render_menu(&mut app.framebuffer, app.menu_selection, MENU_OPTIONS, app.muted);
+                render_frame(terminal, app, size)?;
+            }
+            AppState::Flying => {
                 run_flying_frame(app, &mut accumulator);
                 render_frame(terminal, app, size)?;
             }
             AppState::AxisMapping => {
-                handle_axis_mapping_input(app);
-                if app.state == AppState::Menu {
-                    continue;
-                }
                 axis_mapping::render_axis_mapping(
                     &mut app.framebuffer,
                     app.axis_map_selection,
@@ -104,21 +118,17 @@ fn handle_menu_input(app: &mut App) {
     let num_options = MENU_OPTIONS.len();
 
     // Keyboard navigation
-    if app.input.was_pressed(KeyCode::Char('i')) || app.input.was_pressed(KeyCode::Up) {
-        if app.menu_selection > 0 {
-            app.menu_selection -= 1;
-        }
+    if (app.input.was_pressed(KeyCode::Char('i')) || app.input.was_pressed(KeyCode::Up))
+        && app.menu_selection > 0
+    {
+        app.menu_selection -= 1;
     }
-    if app.input.was_pressed(KeyCode::Char('k')) || app.input.was_pressed(KeyCode::Down) {
-        if app.menu_selection < num_options - 1 {
-            app.menu_selection += 1;
-        }
+    if (app.input.was_pressed(KeyCode::Char('k')) || app.input.was_pressed(KeyCode::Down))
+        && app.menu_selection < num_options - 1
+    {
+        app.menu_selection += 1;
     }
 
-    if app.input.was_pressed(KeyCode::Char('q')) || app.input.was_pressed(KeyCode::Esc) {
-        app.running = false;
-        return;
-    }
 
     let selected = app.input.was_pressed(KeyCode::Enter);
 
@@ -136,6 +146,15 @@ fn handle_menu_input(app: &mut App) {
                 app.state = AppState::AxisMapping;
                 app.needs_clear = true;
             }
+            MenuOption::ToggleMusic => {
+                app.muted = !app.muted;
+                if let Some(ref mut sound) = app.sound {
+                    if app.muted {
+                        sound.stop();
+                    }
+                    // If unmuted, the music loop at the top of the frame will restart it
+                }
+            }
             MenuOption::Quit => {
                 app.running = false;
             }
@@ -144,11 +163,9 @@ fn handle_menu_input(app: &mut App) {
 }
 
 fn handle_flying_input(app: &mut App, frame_time: f32, _accumulator: &mut f32) {
-    // Esc = back to menu
     if app.input.was_pressed(KeyCode::Esc) || app.input.was_pressed(KeyCode::Char('q')) {
         app.state = AppState::Menu;
         app.needs_clear = true;
-        app.input.pressed.clear();
         return;
     }
 
@@ -170,13 +187,23 @@ fn handle_flying_input(app: &mut App, frame_time: f32, _accumulator: &mut f32) {
     }
 
     // Update sticks: gamepad priority
-    let use_gamepad = app.gamepad.as_ref().map_or(false, |gp| gp.connected);
+    // Only accept gamepad input once throttle has been at zero after entering flight.
+    // This prevents the drone launching immediately if throttle was held during menu.
+    let use_gamepad = app.gamepad.as_ref().is_some_and(|gp| gp.connected);
     if use_gamepad {
         let gp = app.gamepad.as_ref().unwrap();
-        app.input.sticks.throttle = gp.sticks.throttle;
-        app.input.sticks.yaw = gp.sticks.yaw;
-        app.input.sticks.pitch = gp.sticks.pitch;
-        app.input.sticks.roll = gp.sticks.roll;
+        if !app.flight_controls_armed {
+            // Wait for throttle near zero before arming
+            if gp.sticks.throttle < 0.05 {
+                app.flight_controls_armed = true;
+            }
+        }
+        if app.flight_controls_armed {
+            app.input.sticks.throttle = gp.sticks.throttle;
+            app.input.sticks.yaw = gp.sticks.yaw;
+            app.input.sticks.pitch = gp.sticks.pitch;
+            app.input.sticks.roll = gp.sticks.roll;
+        }
     } else {
         app.input.update_sticks(frame_time);
     }
@@ -227,13 +254,12 @@ fn run_flying_frame(app: &mut App, accumulator: &mut f32) {
 }
 
 fn handle_axis_mapping_input(app: &mut App) {
-    if app.input.was_pressed(KeyCode::Esc) {
+    if app.input.was_pressed(KeyCode::Esc) || app.input.was_pressed(KeyCode::Char('q')) {
         if app.axis_map_listening {
             app.axis_map_listening = false;
         } else {
             app.state = AppState::Menu;
             app.needs_clear = true;
-            app.input.pressed.clear(); // don't let Esc leak into menu
         }
         return;
     }
@@ -244,6 +270,7 @@ fn handle_axis_mapping_input(app: &mut App) {
             if let Some(axis) = gp.detect_axis() {
                 if let Some(ref mut gp) = app.gamepad {
                     gp.mapping.get_mut(app.axis_map_selection).axis = axis;
+                    gp.mapping.save();
                 }
                 app.axis_map_listening = false;
             }
@@ -252,22 +279,21 @@ fn handle_axis_mapping_input(app: &mut App) {
     }
 
     // Navigation
-    if app.input.was_pressed(KeyCode::Char('i')) || app.input.was_pressed(KeyCode::Up) {
-        if app.axis_map_selection > 0 {
-            app.axis_map_selection -= 1;
-        }
+    if (app.input.was_pressed(KeyCode::Char('i')) || app.input.was_pressed(KeyCode::Up))
+        && app.axis_map_selection > 0
+    {
+        app.axis_map_selection -= 1;
     }
-    if app.input.was_pressed(KeyCode::Char('k')) || app.input.was_pressed(KeyCode::Down) {
-        if app.axis_map_selection < 3 {
-            app.axis_map_selection += 1;
-        }
+    if (app.input.was_pressed(KeyCode::Char('k')) || app.input.was_pressed(KeyCode::Down))
+        && app.axis_map_selection < 3
+    {
+        app.axis_map_selection += 1;
     }
 
-    // Enter = start listening for axis
-    if app.input.was_pressed(KeyCode::Enter) {
-        if app.gamepad.as_ref().map_or(false, |gp| gp.connected) {
-            app.axis_map_listening = true;
-        }
+    if app.input.was_pressed(KeyCode::Enter)
+        && app.gamepad.as_ref().is_some_and(|gp| gp.connected)
+    {
+        app.axis_map_listening = true;
     }
 
     // I key for invert (when not used for navigation — use 'v' instead)
@@ -275,6 +301,7 @@ fn handle_axis_mapping_input(app: &mut App) {
         if let Some(ref mut gp) = app.gamepad {
             let a = gp.mapping.get_mut(app.axis_map_selection);
             a.inverted = !a.inverted;
+            gp.mapping.save();
         }
     }
 }
@@ -325,11 +352,12 @@ fn render_pixel_hud(
     let w = fb.width as i32;
     let h = fb.height as i32;
 
-    // Scale based on terminal columns (not pixel width) so the HUD looks
-    // the same size regardless of render mode's pixel multiplier.
+    // Scale font so it covers the same number of terminal cells in both modes.
+    // Kitty has 2x pixels per cell vs halfblock, so we multiply scale by px_w
+    // to compensate. This makes the font the same visual size on screen.
     let (px_w, _) = render_mode.cell_pixels();
-    let term_cols = w / px_w.max(1) as i32;
-    let scale = if term_cols >= 200 { 3 } else if term_cols >= 100 { 2 } else { 1 };
+    let base_scale = (w as u32 / 1600).clamp(1, 3);
+    let scale = base_scale * px_w;
     let char_w = 8 * scale as i32;
     let pad = scale as i32 * 2;
 

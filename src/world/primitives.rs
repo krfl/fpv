@@ -80,54 +80,12 @@ pub fn cube(center: Point3<f32>, size: f32, color: Color) -> Mesh {
     Mesh::new(vertices, indices).with_transform(transform)
 }
 
-/// Generate a racing gate (rectangular arch).
-pub fn gate(position: Point3<f32>, rotation_y_deg: f32, width: f32, height: f32, color: Color) -> Mesh {
+/// Generate a racing gate as 3 separate meshes (left post, right post, top beam).
+/// Each part has its own AABB collider so the opening is flyable.
+pub fn gate(position: Point3<f32>, rotation_y_deg: f32, width: f32, height: f32, color: Color) -> Vec<Mesh> {
     let thickness = 0.15;
     let post_width = 0.15;
-
-    let mut vertices = Vec::new();
-    let mut indices = Vec::new();
-
-    // Helper to add a box (post or beam)
-    let mut add_box = |cx: f32, cy: f32, cz: f32, sx: f32, sy: f32, sz: f32, c: Color| {
-        let base = vertices.len() as u32;
-        let hx = sx / 2.0;
-        let hy = sy / 2.0;
-        let hz = sz / 2.0;
-        let positions = [
-            Point3::new(cx - hx, cy - hy, cz - hz),
-            Point3::new(cx + hx, cy - hy, cz - hz),
-            Point3::new(cx + hx, cy + hy, cz - hz),
-            Point3::new(cx - hx, cy + hy, cz - hz),
-            Point3::new(cx - hx, cy - hy, cz + hz),
-            Point3::new(cx + hx, cy - hy, cz + hz),
-            Point3::new(cx + hx, cy + hy, cz + hz),
-            Point3::new(cx - hx, cy + hy, cz + hz),
-        ];
-        for &p in &positions {
-            vertices.push(Vertex { position: p, color: c });
-        }
-        // Same face indices as cube, offset by base
-        for tri in &[
-            [4, 5, 6], [4, 6, 7],
-            [1, 0, 3], [1, 3, 2],
-            [5, 1, 2], [5, 2, 6],
-            [0, 4, 7], [0, 7, 3],
-            [7, 6, 2], [7, 2, 3],
-            [0, 1, 5], [0, 5, 4],
-        ] {
-            indices.push([base + tri[0], base + tri[1], base + tri[2]]);
-        }
-    };
-
     let hw = width / 2.0;
-
-    // Left post
-    add_box(-hw, height / 2.0, 0.0, post_width, height, thickness, color);
-    // Right post
-    add_box(hw, height / 2.0, 0.0, post_width, height, thickness, color);
-    // Top beam
-    add_box(0.0, height, 0.0, width + post_width, post_width, thickness, color);
 
     let rotation = UnitQuaternion::from_axis_angle(
         &Vector3::y_axis(),
@@ -138,7 +96,40 @@ pub fn gate(position: Point3<f32>, rotation_y_deg: f32, width: f32, height: f32,
         rotation,
     );
 
-    Mesh::new(vertices, indices).with_transform(transform).no_collision()
+    vec![
+        // Left post
+        make_box(-hw, height / 2.0, 0.0, post_width, height, thickness, color)
+            .with_transform(transform),
+        // Right post
+        make_box(hw, height / 2.0, 0.0, post_width, height, thickness, color)
+            .with_transform(transform),
+        // Top beam
+        make_box(0.0, height, 0.0, width + post_width, post_width, thickness, color)
+            .with_transform(transform),
+    ]
+}
+
+/// Helper: create a box mesh at local position with given dimensions.
+fn make_box(cx: f32, cy: f32, cz: f32, sx: f32, sy: f32, sz: f32, color: Color) -> Mesh {
+    let hx = sx / 2.0;
+    let hy = sy / 2.0;
+    let hz = sz / 2.0;
+    let positions = [
+        Point3::new(cx - hx, cy - hy, cz - hz),
+        Point3::new(cx + hx, cy - hy, cz - hz),
+        Point3::new(cx + hx, cy + hy, cz - hz),
+        Point3::new(cx - hx, cy + hy, cz - hz),
+        Point3::new(cx - hx, cy - hy, cz + hz),
+        Point3::new(cx + hx, cy - hy, cz + hz),
+        Point3::new(cx + hx, cy + hy, cz + hz),
+        Point3::new(cx - hx, cy + hy, cz + hz),
+    ];
+    let vertices: Vec<Vertex> = positions.iter().map(|&p| Vertex { position: p, color }).collect();
+    let indices = vec![
+        [4,5,6],[4,6,7], [1,0,3],[1,3,2], [5,1,2],[5,2,6],
+        [0,4,7],[0,7,3], [7,6,2],[7,2,3], [0,1,5],[0,5,4],
+    ];
+    Mesh::new(vertices, indices)
 }
 
 /// Generate a tall pillar (for power loops and dives).
@@ -201,7 +192,7 @@ pub fn wall(position: Point3<f32>, rotation_y_deg: f32, width: f32, height: f32,
     Mesh::new(vertices, indices).with_transform(transform)
 }
 
-/// Generate a ramp for proximity flying.
+/// Generate a ramp for proximity flying (no collision — AABB can't represent slopes).
 pub fn ramp(position: Point3<f32>, rotation_y_deg: f32, width: f32, length: f32, height: f32, color: Color) -> Mesh {
     let hw = width / 2.0;
     let hl = length / 2.0;
@@ -221,5 +212,5 @@ pub fn ramp(position: Point3<f32>, rotation_y_deg: f32, width: f32, length: f32,
         Translation3::from(position.coords),
         UnitQuaternion::from_axis_angle(&Vector3::y_axis(), rotation_y_deg.to_radians()),
     );
-    Mesh::new(vertices, indices).with_transform(transform)
+    Mesh::new(vertices, indices).with_transform(transform).no_collision()
 }

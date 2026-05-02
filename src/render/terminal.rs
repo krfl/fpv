@@ -95,8 +95,8 @@ pub fn render_kitty_frame(
     term_rows: u16,
 ) -> io::Result<()> {
     let frame_num = KITTY_FRAME.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let new_id = if frame_num % 2 == 0 { 1 } else { 2 };
-    let old_id = if frame_num % 2 == 0 { 2 } else { 1 };
+    let new_id = if frame_num.is_multiple_of(2) { 1 } else { 2 };
+    let old_id = if frame_num.is_multiple_of(2) { 2 } else { 1 };
 
     // Build RGB byte buffer from framebuffer
     let pixel_count = (fb.width * fb.height) as usize;
@@ -120,7 +120,7 @@ pub fn render_kitty_frame(
 
     // Step 1: Transmit new image data silently (a=t, no display yet)
     const CHUNK_SIZE: usize = 4096;
-    let total_chunks = (encoded_bytes.len() + CHUNK_SIZE - 1) / CHUNK_SIZE;
+    let total_chunks = encoded_bytes.len().div_ceil(CHUNK_SIZE);
 
     for (i, chunk) in encoded_bytes.chunks(CHUNK_SIZE).enumerate() {
         let is_last = i == total_chunks - 1;

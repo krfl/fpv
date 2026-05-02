@@ -43,7 +43,7 @@ pub fn test_course() -> Scene {
     meshes.push(primitives::pillar(Point3::new(-5.5, 0.0, -24.0), 0.3, 3.0, blue));
     meshes.push(primitives::pillar(Point3::new( 5.5, 0.0, -24.0), 0.3, 3.0, blue));
     // Gate at the bottom to fly through
-    meshes.push(primitives::gate(Point3::new(0.0, 0.0, -24.0), 0.0, 3.0, 2.5, cyan));
+    meshes.extend(primitives::gate(Point3::new(0.0, 0.0, -24.0), 0.0, 3.0, 2.5, cyan));
 
     // === FREESTYLE BUILDING — stack of cubes to orbit and thread ===
     // L-shaped building
@@ -52,13 +52,13 @@ pub fn test_course() -> Scene {
     meshes.push(primitives::cube(Point3::new(-10.0, 2.5, -20.0), 5.0, gray));
     // Gap between building sections — fly through!
     meshes.push(primitives::cube(Point3::new(-15.0, 2.5, -25.0), 5.0, dark_gray));
-    meshes.push(primitives::gate(Point3::new(-12.5, 0.0, -22.5), 90.0, 3.0, 4.0, green));
+    meshes.extend(primitives::gate(Point3::new(-12.5, 0.0, -22.5), 90.0, 3.0, 4.0, green));
 
     // === RAMP SECTION — matty flips and proximity ===
     meshes.push(primitives::ramp(Point3::new(15.0, 0.0, -15.0), 0.0, 6.0, 8.0, 4.0, yellow));
     meshes.push(primitives::ramp(Point3::new(15.0, 0.0, -30.0), 180.0, 6.0, 8.0, 4.0, yellow));
     // Gate between the ramps
-    meshes.push(primitives::gate(Point3::new(15.0, 0.0, -22.5), 0.0, 3.0, 3.0, orange));
+    meshes.extend(primitives::gate(Point3::new(15.0, 0.0, -22.5), 0.0, 3.0, 3.0, orange));
 
     // === SPLIT-S TOWERS — twin towers with a gap ===
     meshes.push(primitives::pillar(Point3::new(-8.0, 0.0, -40.0), 0.8, 12.0, purple));
@@ -66,7 +66,7 @@ pub fn test_course() -> Scene {
     // Bridge between towers — fly under or over
     meshes.push(primitives::wall(Point3::new(0.0, 8.0, -40.0), 0.0, 16.0, 1.5, 0.5, purple));
     // Gate under the bridge
-    meshes.push(primitives::gate(Point3::new(0.0, 0.0, -40.0), 0.0, 4.0, 3.0, green));
+    meshes.extend(primitives::gate(Point3::new(0.0, 0.0, -40.0), 0.0, 4.0, 3.0, green));
 
     // === SLALOM PILLARS — weave through at speed ===
     for i in 0..6 {
@@ -77,7 +77,7 @@ pub fn test_course() -> Scene {
         meshes.push(primitives::pillar(Point3::new(x, 0.0, z), 0.4, h, color));
     }
     // Gate at the end of the slalom
-    meshes.push(primitives::gate(Point3::new(0.0, 0.0, -86.0), 0.0, 3.0, 2.5, yellow));
+    meshes.extend(primitives::gate(Point3::new(0.0, 0.0, -86.0), 0.0, 3.0, 2.5, yellow));
 
     // === BANDO (abandoned building) — orbit and explore ===
     let bx = 25.0;
@@ -87,8 +87,8 @@ pub fn test_course() -> Scene {
     meshes.push(primitives::wall(Point3::new(bx + 5.0, 0.0, bz), 90.0, 12.0, 7.0, 0.3, dark_gray));
     meshes.push(primitives::wall(Point3::new(bx, 0.0, bz - 6.0), 0.0, 10.0, 7.0, 0.3, gray));
     // Windows (gates in the walls)
-    meshes.push(primitives::gate(Point3::new(bx, 0.0, bz + 6.0), 0.0, 3.0, 3.5, red));
-    meshes.push(primitives::gate(Point3::new(bx - 5.0, 0.0, bz), 90.0, 3.0, 3.5, red));
+    meshes.extend(primitives::gate(Point3::new(bx, 0.0, bz + 6.0), 0.0, 3.0, 3.5, red));
+    meshes.extend(primitives::gate(Point3::new(bx - 5.0, 0.0, bz), 90.0, 3.0, 3.5, red));
     // Roof beams
     meshes.push(primitives::wall(Point3::new(bx, 6.5, bz), 0.0, 10.5, 0.5, 12.5, dark_gray));
 
@@ -103,10 +103,10 @@ pub fn test_course() -> Scene {
     // High-altitude gate on pillars — sends you up
     meshes.push(primitives::pillar(Point3::new(-2.0, 0.0, -6.0), 0.3, 8.0, white));
     meshes.push(primitives::pillar(Point3::new( 2.0, 0.0, -6.0), 0.3, 8.0, white));
-    meshes.push(primitives::gate(Point3::new(0.0, 8.0, -6.0), 0.0, 3.0, 2.0, white));
+    meshes.extend(primitives::gate(Point3::new(0.0, 8.0, -6.0), 0.0, 3.0, 2.0, white));
 
     // Low-altitude speed gate right off the start
-    meshes.push(primitives::gate(Point3::new(0.0, 0.0, -4.0), 0.0, 4.0, 1.5, yellow));
+    meshes.extend(primitives::gate(Point3::new(0.0, 0.0, -4.0), 0.0, 4.0, 1.5, yellow));
 
     // Precompute collision AABBs
     let colliders: Vec<Aabb> = meshes

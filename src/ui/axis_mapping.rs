@@ -17,20 +17,19 @@ pub fn render_axis_mapping(
         return;
     }
 
-    // Widest line: "> THROTTLE: RIGHTSTICKX INV" ~28 chars
-    let scale: u32 = ((w as u32) / (28 * 8)).min(3).max(1);
+    let scale: u32 = ((w as u32 * 36 / 100) / (32 * 8)).clamp(1, 3);
     let char_w = 8 * scale as i32;
     let line_h = 8 * scale as i32 + 4;
 
     // Title
     let title = "AXIS MAPPING";
     let title_px = title.len() as i32 * char_w;
-    font::draw_string(fb, title, (w - title_px) / 2, h / 8, Color::new(255, 200, 50), None, scale);
+    font::draw_string(fb, title, (w - title_px) / 2, h / 10, Color::new(255, 200, 50), None, scale);
 
     let controls = ["THROTTLE", "YAW", "PITCH", "ROLL"];
     let gamepad_ref = gamepad.filter(|gp| gp.connected);
 
-    let start_y = h / 4;
+    let start_y = h / 5;
     for (i, control) in controls.iter().enumerate() {
         let y = start_y + i as i32 * line_h;
         let is_selected = i == selection;
@@ -71,6 +70,26 @@ pub fn render_axis_mapping(
         };
 
         font::draw_string(fb, &text, (w - text_px) / 2, y, color, bg, scale);
+    }
+
+    // Live axis monitor — shows all active axes in real time
+    if let Some(gp) = gamepad_ref {
+        let monitor_y = start_y + 4 * line_h + line_h;
+        let monitor_label = "LIVE AXES:";
+        font::draw_string(fb, monitor_label, char_w, monitor_y, Color::new(100, 100, 130), None, scale);
+
+        let values = gp.all_axis_values();
+        for (i, (axis, val)) in values.iter().enumerate() {
+            if i >= 6 { break; } // max 6 rows
+            let y = monitor_y + (i as i32 + 1) * line_h;
+            let text = format!("{:?}: {:.2}", axis, val);
+            let color = if val.abs() > 0.5 {
+                Color::new(80, 255, 80) // bright green when active
+            } else {
+                Color::new(70, 70, 90)
+            };
+            font::draw_string(fb, &text, char_w * 2, y, color, None, scale);
+        }
     }
 
     // Instructions
