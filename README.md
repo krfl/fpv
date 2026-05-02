@@ -4,6 +4,8 @@ A physics-based FPV drone simulator that runs in the terminal. Written in Rust.
 
 ![fpv](https://img.shields.io/badge/rust-terminal--sim-orange)
 
+![screenshot](screenshot.png)
+
 ## Features
 
 - **Physics simulation** — quaternion-based orientation, Betaflight-style rate curves, linear drag, motor response modeling
