@@ -7,6 +7,33 @@ use crate::world::mesh::Mesh;
 const SUN_DIR: Vector3<f32> = Vector3::new(0.3, 0.8, 0.5);
 const NEAR_W: f32 = 0.01;
 
+/// Fog parameters — blend to horizon color based on linear eye-space distance.
+pub const FOG_COLOR: Color = Color::new(80, 100, 140);
+const FOG_START_DIST: f32 = 60.0;  // meters — no fog closer than this
+const FOG_END_DIST: f32 = 150.0;   // meters — fully fogged beyond this
+
+/// Convert NDC z to linear eye-space distance (inverse of perspective projection).
+/// near=0.05, far=200.0 from camera.rs
+#[inline(always)]
+fn ndc_to_linear_depth(ndc_z: f32) -> f32 {
+    let near = 0.05f32;
+    let far = 200.0f32;
+    (2.0 * near * far) / (far + near - ndc_z * (far - near))
+}
+
+#[inline(always)]
+fn apply_fog(color: Color, ndc_z: f32) -> Color {
+    let dist = ndc_to_linear_depth(ndc_z);
+    if dist <= FOG_START_DIST {
+        return color;
+    }
+    if dist >= FOG_END_DIST {
+        return FOG_COLOR;
+    }
+    let t = (dist - FOG_START_DIST) / (FOG_END_DIST - FOG_START_DIST);
+    color.lerp(FOG_COLOR, t)
+}
+
 /// Test if a mesh's bounding sphere is visible in the view frustum.
 fn is_mesh_visible(mesh: &Mesh, view_proj: &Matrix4<f32>) -> bool {
     let center = mesh.world_bounds_center();
@@ -218,7 +245,7 @@ fn rasterize_triangle(
                 let idx = (row_offset + x) as usize;
                 if z < fb.depth[idx] {
                     fb.depth[idx] = z;
-                    fb.color[idx] = color;
+                    fb.color[idx] = apply_fog(color, z);
                 }
             }
 

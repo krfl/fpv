@@ -37,9 +37,11 @@ fn main() -> io::Result<()> {
     let mut terminal = Terminal::new(backend)?;
     terminal.clear()?;
 
-    // Create scene and app
+    // Create app (starts in menu state with a default scene)
     let scene = world::scene::test_course();
     let mut app = app::App::new(scene);
+    // Clean up kitty images on exit
+    let _ = render::terminal::cleanup_kitty();
 
     // Resize framebuffer to terminal size
     let size = terminal.size()?;

@@ -1,10 +1,11 @@
-use std::io::Stdout;
+use std::io::{Stdout, Write};
 use std::time::{Duration, Instant};
 
+use crossterm::event::KeyCode;
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 
-use crate::app::App;
+use crate::app::{App, AppState, MenuOption, MENU_OPTIONS};
 use crate::input::controls::StickState;
 use crate::physics::drone::{physics_step, DroneState};
 use crate::render::camera;
@@ -12,6 +13,8 @@ use crate::render::font;
 use crate::render::framebuffer::{Color, Framebuffer};
 use crate::render::rasterizer;
 use crate::render::terminal::{self, FpvView, RenderMode};
+use crate::ui::axis_mapping;
+use crate::ui::menu;
 
 const PHYSICS_HZ: f32 = 240.0;
 const PHYSICS_DT: f32 = 1.0 / PHYSICS_HZ;
@@ -25,7 +28,7 @@ pub fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> 
 
     // Spawn dedicated input thread
     let input_shared = app.input.shared.clone();
-    let input_handle = crate::input::controls::spawn_input_thread(input_shared);
+    let _input_handle = crate::input::controls::spawn_input_thread(input_shared);
 
     loop {
         let now = Instant::now();
@@ -33,107 +36,49 @@ pub fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> 
         last_time = now;
         accumulator += frame_time;
 
-        // Sync input state from the input thread
+        // Sync input from thread
         app.input.sync_from_shared();
 
-        if !app.running || app.input.quit_requested {
-            if app.render_mode == RenderMode::Kitty {
-                let _ = terminal::cleanup_kitty();
-            }
-            break;
+        // Poll gamepad
+        if let Some(ref mut gp) = app.gamepad {
+            gp.poll();
         }
 
-        // Handle reset
-        if app.input.reset_requested {
-            app.reset();
-            app.input.clear_reset();
-        }
-
-        // Handle render mode toggle
-        if app.input.render_mode_toggle {
-            if app.render_mode == RenderMode::Kitty {
-                let _ = terminal::cleanup_kitty();
-            }
-            app.render_mode = app.render_mode.toggle();
-            app.input.clear_render_toggle();
-            if app.render_mode == RenderMode::Kitty {
-                terminal::reset_kitty_frame_counter();
-            }
-            let size = terminal.size()?;
-            app.resize_framebuffer(size.width, size.height);
-            terminal.clear()?;
-        }
-
-        // Update stick values: gamepad takes priority over keyboard
-        let use_gamepad = if let Some(ref mut gp) = app.gamepad {
-            gp.poll()
-        } else {
-            false
-        };
-
-        if use_gamepad {
-            // Copy gamepad stick values directly (real analog input)
-            let gp = app.gamepad.as_ref().unwrap();
-            app.input.sticks.throttle = gp.sticks.throttle;
-            app.input.sticks.yaw = gp.sticks.yaw;
-            app.input.sticks.pitch = gp.sticks.pitch;
-            app.input.sticks.roll = gp.sticks.roll;
-        } else {
-            // Fall back to keyboard with smoothing
-            app.input.update_sticks(frame_time);
-        }
-
-        // Fixed timestep physics
-        while accumulator >= PHYSICS_DT {
-            physics_step(&mut app.drone, &app.config, &app.input.sticks, &app.scene.colliders, PHYSICS_DT);
-            if !app.drone.crashed {
-                app.flight_time += PHYSICS_DT;
-            }
-            accumulator -= PHYSICS_DT;
-        }
-
-        // Get terminal size
+        // Get terminal size + resize framebuffer
         let size = terminal.size()?;
         app.resize_framebuffer(size.width, size.height);
 
-        // Rasterize scene
-        let view = camera::fpv_view_matrix(&app.drone, &app.config);
-        let aspect = app.framebuffer.width as f32 / app.framebuffer.height as f32;
-        let proj = camera::projection_matrix(120.0, aspect);
-        let view_proj = proj * view;
-
-        let sky = Color::new(40, 60, 120);
-        app.framebuffer.clear(sky);
-
-        for mesh in &app.scene.meshes {
-            rasterizer::rasterize_mesh(&mut app.framebuffer, mesh, &view_proj);
-        }
-
-        // Pixel HUD rendered into framebuffer
-        render_pixel_hud(
-            &mut app.framebuffer,
-            &app.input.sticks,
-            &app.drone,
-            app.flight_time,
-            app.gamepad.as_ref().filter(|gp| gp.connected).map(|gp| gp.name.as_str()),
-        );
-
-        // Render based on mode
-        if app.render_mode == RenderMode::Kitty {
-            terminal::render_kitty_frame(
-                &app.framebuffer,
-                size.width,
-                size.height,
-            )?;
-        } else {
-            terminal.draw(|frame| {
-                let area = frame.area();
-                let fpv = FpvView {
-                    framebuffer: &app.framebuffer,
-                    mode: app.render_mode,
-                };
-                frame.render_widget(fpv, area);
-            })?;
+        // State dispatch
+        match app.state {
+            AppState::Menu => {
+                handle_menu_input(app);
+                if !app.running {
+                    break;
+                }
+                menu::render_menu(&mut app.framebuffer, app.menu_selection, MENU_OPTIONS);
+                render_frame(terminal, app, size)?;
+            }
+            AppState::Flying => {
+                handle_flying_input(app, frame_time, &mut accumulator);
+                if app.state == AppState::Menu {
+                    continue; // went back to menu
+                }
+                run_flying_frame(app, &mut accumulator);
+                render_frame(terminal, app, size)?;
+            }
+            AppState::AxisMapping => {
+                handle_axis_mapping_input(app);
+                if app.state == AppState::Menu {
+                    continue;
+                }
+                axis_mapping::render_axis_mapping(
+                    &mut app.framebuffer,
+                    app.axis_map_selection,
+                    app.axis_map_listening,
+                    app.gamepad.as_ref(),
+                );
+                render_frame(terminal, app, size)?;
+            }
         }
 
         // Frame rate limiting
@@ -143,24 +88,232 @@ pub fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> 
         }
     }
 
-    // Wait for input thread to finish
-    let _ = input_handle.join();
-
     Ok(())
 }
 
-/// Render HUD directly into the framebuffer as pixels (for kitty mode).
+fn handle_menu_input(app: &mut App) {
+    let num_options = MENU_OPTIONS.len();
+
+    // Keyboard navigation
+    if app.input.was_pressed(KeyCode::Char('i')) || app.input.was_pressed(KeyCode::Up) {
+        if app.menu_selection > 0 {
+            app.menu_selection -= 1;
+        }
+    }
+    if app.input.was_pressed(KeyCode::Char('k')) || app.input.was_pressed(KeyCode::Down) {
+        if app.menu_selection < num_options - 1 {
+            app.menu_selection += 1;
+        }
+    }
+
+    if app.input.was_pressed(KeyCode::Char('q')) || app.input.was_pressed(KeyCode::Esc) {
+        app.running = false;
+        return;
+    }
+
+    let selected = app.input.was_pressed(KeyCode::Enter);
+
+    if selected {
+        match MENU_OPTIONS[app.menu_selection] {
+            MenuOption::Play => {
+                app.scene = crate::world::procedural::random_course();
+                app.reset();
+                app.state = AppState::Flying;
+                app.needs_clear = true;
+            }
+            MenuOption::AxisMapping => {
+                app.axis_map_selection = 0;
+                app.axis_map_listening = false;
+                app.state = AppState::AxisMapping;
+                app.needs_clear = true;
+            }
+            MenuOption::Quit => {
+                app.running = false;
+            }
+        }
+    }
+}
+
+fn handle_flying_input(app: &mut App, frame_time: f32, _accumulator: &mut f32) {
+    // Esc = back to menu
+    if app.input.was_pressed(KeyCode::Esc) || app.input.was_pressed(KeyCode::Char('q')) {
+        app.state = AppState::Menu;
+        app.needs_clear = true;
+        return;
+    }
+
+    // Reset
+    if app.input.was_pressed(KeyCode::Char('r')) {
+        app.reset();
+    }
+
+    // Render mode toggle
+    if app.input.was_pressed(KeyCode::Tab) {
+        if app.render_mode == RenderMode::Kitty {
+            let _ = terminal::cleanup_kitty();
+        }
+        app.render_mode = app.render_mode.toggle(app.kitty_supported);
+        if app.render_mode == RenderMode::Kitty {
+            terminal::reset_kitty_frame_counter();
+        }
+        app.needs_clear = true;
+    }
+
+    // Update sticks: gamepad priority
+    let use_gamepad = app.gamepad.as_ref().map_or(false, |gp| gp.connected);
+    if use_gamepad {
+        let gp = app.gamepad.as_ref().unwrap();
+        app.input.sticks.throttle = gp.sticks.throttle;
+        app.input.sticks.yaw = gp.sticks.yaw;
+        app.input.sticks.pitch = gp.sticks.pitch;
+        app.input.sticks.roll = gp.sticks.roll;
+    } else {
+        app.input.update_sticks(frame_time);
+    }
+}
+
+fn run_flying_frame(app: &mut App, accumulator: &mut f32) {
+    // Fixed timestep physics
+    while *accumulator >= PHYSICS_DT {
+        physics_step(
+            &mut app.drone,
+            &app.config,
+            &app.input.sticks,
+            &app.scene.colliders,
+            PHYSICS_DT,
+        );
+        if !app.drone.crashed {
+            app.flight_time += PHYSICS_DT;
+        }
+        *accumulator -= PHYSICS_DT;
+    }
+
+    // Rasterize scene
+    let view = camera::fpv_view_matrix(&app.drone, &app.config);
+    let aspect = app.framebuffer.width as f32 / app.framebuffer.height as f32;
+    let proj = camera::projection_matrix(120.0, aspect);
+    let view_proj = proj * view;
+
+    let zenith = Color::new(15, 20, 60);
+    let horizon = crate::render::rasterizer::FOG_COLOR;
+    app.framebuffer.clear_gradient(zenith, horizon);
+
+    for mesh in &app.scene.meshes {
+        rasterizer::rasterize_mesh(&mut app.framebuffer, mesh, &view_proj);
+    }
+
+    // Pixel HUD
+    render_pixel_hud(
+        &mut app.framebuffer,
+        &app.input.sticks,
+        &app.drone,
+        app.flight_time,
+        app.gamepad
+            .as_ref()
+            .filter(|gp| gp.connected)
+            .map(|gp| gp.name.as_str()),
+        app.render_mode,
+    );
+}
+
+fn handle_axis_mapping_input(app: &mut App) {
+    if app.input.was_pressed(KeyCode::Esc) {
+        if app.axis_map_listening {
+            app.axis_map_listening = false;
+        } else {
+            app.state = AppState::Menu;
+            app.needs_clear = true;
+        }
+        return;
+    }
+
+    if app.axis_map_listening {
+        // Detect axis movement
+        if let Some(ref gp) = app.gamepad {
+            if let Some(axis) = gp.detect_axis() {
+                if let Some(ref mut gp) = app.gamepad {
+                    gp.mapping.get_mut(app.axis_map_selection).axis = axis;
+                }
+                app.axis_map_listening = false;
+            }
+        }
+        return;
+    }
+
+    // Navigation
+    if app.input.was_pressed(KeyCode::Char('i')) || app.input.was_pressed(KeyCode::Up) {
+        if app.axis_map_selection > 0 {
+            app.axis_map_selection -= 1;
+        }
+    }
+    if app.input.was_pressed(KeyCode::Char('k')) || app.input.was_pressed(KeyCode::Down) {
+        if app.axis_map_selection < 3 {
+            app.axis_map_selection += 1;
+        }
+    }
+
+    // Enter = start listening for axis
+    if app.input.was_pressed(KeyCode::Enter) {
+        if app.gamepad.as_ref().map_or(false, |gp| gp.connected) {
+            app.axis_map_listening = true;
+        }
+    }
+
+    // I key for invert (when not used for navigation — use 'v' instead)
+    if app.input.was_pressed(KeyCode::Char('v')) {
+        if let Some(ref mut gp) = app.gamepad {
+            let a = gp.mapping.get_mut(app.axis_map_selection);
+            a.inverted = !a.inverted;
+        }
+    }
+}
+
+/// Render the framebuffer to the terminal (handles both modes).
+fn render_frame(
+    terminal: &mut Terminal<CrosstermBackend<Stdout>>,
+    app: &mut App,
+    size: ratatui::layout::Size,
+) -> std::io::Result<()> {
+    // Clear screen on mode/state transitions to remove previous render artifacts
+    if app.needs_clear {
+        let _ = terminal::cleanup_kitty();
+        // Clear terminal screen and reset ratatui state
+        write!(std::io::stdout(), "\x1b[2J\x1b[H")?;
+        std::io::stdout().flush()?;
+        terminal.clear()?;
+        app.needs_clear = false;
+    }
+
+    match app.render_mode {
+        RenderMode::Kitty => {
+            terminal::render_kitty_frame(&app.framebuffer, size.width, size.height)?;
+        }
+        RenderMode::HalfBlock => {
+            terminal.draw(|frame| {
+                let area = frame.area();
+                let fpv = FpvView {
+                    framebuffer: &app.framebuffer,
+                    mode: app.render_mode,
+                };
+                frame.render_widget(fpv, area);
+            })?;
+        }
+    }
+    Ok(())
+}
+
+/// Render HUD directly into the framebuffer as pixels.
 fn render_pixel_hud(
     fb: &mut Framebuffer,
     sticks: &StickState,
     drone: &DroneState,
     flight_time: f32,
     gamepad_name: Option<&str>,
+    render_mode: RenderMode,
 ) {
     let w = fb.width as i32;
     let h = fb.height as i32;
 
-    // Auto-scale font based on framebuffer size
     let scale = if w >= 900 { 3 } else if w >= 450 { 2 } else { 1 };
     let char_w = 8 * scale as i32;
     let pad = scale as i32 * 2;
@@ -178,6 +331,14 @@ fn render_pixel_hud(
     let timer = format!("{:02}:{:02}", secs / 60, secs % 60);
     let tx = w / 2 - (timer.len() as i32 * char_w) / 2;
     font::draw_string(fb, &timer, tx, pad, white, bg, scale);
+
+    // Render mode (top right)
+    let mode_label = match render_mode {
+        RenderMode::HalfBlock => "BLOCK",
+        RenderMode::Kitty => "KITTY",
+    };
+    let mode_px = mode_label.len() as i32 * char_w;
+    font::draw_string(fb, mode_label, w - mode_px - pad, pad, gray, bg, scale);
 
     // Controls / gamepad name (top left)
     if let Some(name) = gamepad_name {

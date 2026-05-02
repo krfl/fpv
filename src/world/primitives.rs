@@ -138,7 +138,7 @@ pub fn gate(position: Point3<f32>, rotation_y_deg: f32, width: f32, height: f32,
         rotation,
     );
 
-    Mesh::new(vertices, indices).with_transform(transform)
+    Mesh::new(vertices, indices).with_transform(transform).no_collision()
 }
 
 /// Generate a tall pillar (for power loops and dives).

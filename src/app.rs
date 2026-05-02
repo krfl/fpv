@@ -5,6 +5,36 @@ use crate::render::framebuffer::Framebuffer;
 use crate::render::terminal::RenderMode;
 use crate::world::scene::Scene;
 
+#[derive(Clone, Copy, PartialEq)]
+pub enum AppState {
+    Menu,
+    Flying,
+    AxisMapping,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum MenuOption {
+    Play,
+    AxisMapping,
+    Quit,
+}
+
+impl MenuOption {
+    pub fn label(self) -> &'static str {
+        match self {
+            MenuOption::Play => "PLAY",
+            MenuOption::AxisMapping => "AXIS MAPPING",
+            MenuOption::Quit => "QUIT",
+        }
+    }
+}
+
+pub const MENU_OPTIONS: &[MenuOption] = &[
+    MenuOption::Play,
+    MenuOption::AxisMapping,
+    MenuOption::Quit,
+];
+
 pub struct App {
     pub drone: DroneState,
     pub config: DroneConfig,
@@ -15,6 +45,13 @@ pub struct App {
     pub render_mode: RenderMode,
     pub flight_time: f32,
     pub running: bool,
+    pub state: AppState,
+    pub menu_selection: usize,
+    // Axis mapping state
+    pub axis_map_selection: usize,
+    pub axis_map_listening: bool,
+    pub needs_clear: bool,
+    pub kitty_supported: bool,
 }
 
 impl App {
@@ -22,12 +59,7 @@ impl App {
         let config = DroneConfig::default();
         let drone = DroneState::new(scene.spawn_position, scene.spawn_orientation);
         let gamepad = GamepadInput::new();
-
-        if let Some(ref gp) = gamepad {
-            if gp.connected {
-                eprintln!("Gamepad detected: {}", gp.name);
-            }
-        }
+        let kitty_supported = crate::render::terminal::detect_kitty_support();
 
         Self {
             drone,
@@ -36,19 +68,23 @@ impl App {
             framebuffer: Framebuffer::new(160, 96),
             input: InputState::new(),
             gamepad,
-            render_mode: RenderMode::HalfBlock,
+            render_mode: if kitty_supported { RenderMode::Kitty } else { RenderMode::HalfBlock },
             flight_time: 0.0,
             running: true,
+            state: AppState::Menu,
+            menu_selection: 0,
+            axis_map_selection: 0,
+            axis_map_listening: false,
+            needs_clear: false,
+            kitty_supported,
         }
     }
 
     pub fn reset(&mut self) {
         self.drone = DroneState::new(self.scene.spawn_position, self.scene.spawn_orientation);
         self.flight_time = 0.0;
-        self.input.reset_requested = false;
     }
 
-    /// Resize framebuffer based on terminal size and render mode.
     pub fn resize_framebuffer(&mut self, term_cols: u16, term_rows: u16) {
         let (px_per_col, px_per_row) = self.render_mode.cell_pixels();
         let fb_w = term_cols as u32 * px_per_col;

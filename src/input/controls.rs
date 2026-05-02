@@ -5,10 +5,10 @@ use std::time::Instant;
 
 /// Smoothed analog stick state derived from binary keyboard input.
 pub struct StickState {
-    pub throttle: f32, // [0, 1]
-    pub yaw: f32,      // [-1, 1]
-    pub pitch: f32,    // [-1, 1]
-    pub roll: f32,     // [-1, 1]
+    pub throttle: f32,
+    pub yaw: f32,
+    pub pitch: f32,
+    pub roll: f32,
 }
 
 impl Default for StickState {
@@ -23,13 +23,11 @@ impl Default for StickState {
 }
 
 /// Shared state between the input thread and main thread.
-/// The input thread writes key events; the main thread reads them.
 pub struct SharedInput {
     pub keys_last_press: HashMap<KeyCode, Instant>,
     pub has_release_support: bool,
-    pub quit_requested: bool,
-    pub reset_requested: bool,
-    pub render_mode_toggle: bool,
+    /// One-shot key presses consumed by the game loop each frame.
+    pub pressed_keys: Vec<KeyCode>,
 }
 
 impl SharedInput {
@@ -37,22 +35,18 @@ impl SharedInput {
         Self {
             keys_last_press: HashMap::new(),
             has_release_support: false,
-            quit_requested: false,
-            reset_requested: false,
-            render_mode_toggle: false,
+            pressed_keys: Vec::new(),
         }
     }
 
     pub fn handle_key_event(&mut self, event: KeyEvent) {
         match event.kind {
-            KeyEventKind::Press | KeyEventKind::Repeat => {
+            KeyEventKind::Press => {
                 self.keys_last_press.insert(event.code, Instant::now());
-                match event.code {
-                    KeyCode::Char('q') | KeyCode::Esc => self.quit_requested = true,
-                    KeyCode::Char('r') => self.reset_requested = true,
-                    KeyCode::Tab => self.render_mode_toggle = true,
-                    _ => {}
-                }
+                self.pressed_keys.push(event.code);
+            }
+            KeyEventKind::Repeat => {
+                self.keys_last_press.insert(event.code, Instant::now());
             }
             KeyEventKind::Release => {
                 self.has_release_support = true;
@@ -64,13 +58,12 @@ impl SharedInput {
 
 const KEY_TIMEOUT_MS: u128 = 120;
 
-/// Main-thread input state. Reads from shared input and computes stick smoothing.
+/// Main-thread input state.
 pub struct InputState {
     pub shared: Arc<Mutex<SharedInput>>,
     pub sticks: StickState,
-    pub quit_requested: bool,
-    pub reset_requested: bool,
-    pub render_mode_toggle: bool,
+    /// One-shot key presses from this frame (consumed each frame).
+    pub pressed: Vec<KeyCode>,
 }
 
 impl InputState {
@@ -78,35 +71,20 @@ impl InputState {
         Self {
             shared: Arc::new(Mutex::new(SharedInput::new())),
             sticks: StickState::default(),
-            quit_requested: false,
-            reset_requested: false,
-            render_mode_toggle: false,
+            pressed: Vec::new(),
         }
     }
 
-    /// Sync flags and key state from the input thread. Call once per frame.
+    /// Drain one-shot key presses from the input thread.
     pub fn sync_from_shared(&mut self) {
-        let shared = self.shared.lock().unwrap();
-        if shared.quit_requested {
-            self.quit_requested = true;
-        }
-        if shared.reset_requested {
-            self.reset_requested = true;
-        }
-        if shared.render_mode_toggle {
-            self.render_mode_toggle = true;
-        }
+        let mut shared = self.shared.lock().unwrap();
+        self.pressed.clear();
+        self.pressed.append(&mut shared.pressed_keys);
     }
 
-    /// Clear one-shot flags after they've been handled.
-    pub fn clear_reset(&mut self) {
-        self.reset_requested = false;
-        self.shared.lock().unwrap().reset_requested = false;
-    }
-
-    pub fn clear_render_toggle(&mut self) {
-        self.render_mode_toggle = false;
-        self.shared.lock().unwrap().render_mode_toggle = false;
+    /// Check if a key was pressed this frame (one-shot).
+    pub fn was_pressed(&self, key: KeyCode) -> bool {
+        self.pressed.contains(&key)
     }
 
     fn is_key_held(&self, key: KeyCode, shared: &SharedInput) -> bool {
@@ -121,13 +99,12 @@ impl InputState {
         }
     }
 
-    /// Update stick positions based on held keys. Call once per frame.
+    /// Update stick positions based on held keys.
     pub fn update_sticks(&mut self, dt: f32) {
         let ramp_up = 3.0;
         let ramp_down = 4.0;
         let throttle_rate = 0.75;
 
-        // Read key state under lock, then drop lock before doing math
         let (w_held, s_held, a_held, d_held, i_held, k_held, j_held, l_held);
         {
             let shared = self.shared.lock().unwrap();
@@ -143,7 +120,6 @@ impl InputState {
             l_held = self.is_key_held(KeyCode::Char('l'), &shared);
         }
 
-        // Throttle - hold mode
         if w_held {
             self.sticks.throttle = (self.sticks.throttle + throttle_rate * dt).min(1.0);
         }
@@ -151,11 +127,9 @@ impl InputState {
             self.sticks.throttle = (self.sticks.throttle - throttle_rate * dt).max(0.0);
         }
 
-        // Yaw (A = left, D = right)
         self.sticks.yaw =
             Self::update_axis(self.sticks.yaw, a_held, d_held, ramp_up, ramp_down, dt);
 
-        // Pitch (I = forward, K = back) - faster response
         self.sticks.pitch = Self::update_axis(
             self.sticks.pitch,
             i_held,
@@ -165,7 +139,6 @@ impl InputState {
             dt,
         );
 
-        // Roll (J = left, L = right)
         self.sticks.roll =
             Self::update_axis(self.sticks.roll, j_held, l_held, ramp_up, ramp_down, dt);
     }
@@ -205,24 +178,17 @@ impl InputState {
     }
 }
 
-/// Spawn the input polling thread. Returns the join handle.
-/// The thread continuously reads crossterm events and pushes them into shared state.
-pub fn spawn_input_thread(
-    shared: Arc<Mutex<SharedInput>>,
-) -> std::thread::JoinHandle<()> {
+/// Spawn the input polling thread.
+pub fn spawn_input_thread(shared: Arc<Mutex<SharedInput>>) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
         use crossterm::event::{self, Event};
         use std::time::Duration;
 
         loop {
-            // Block up to 5ms waiting for an event — tight enough for responsive input
             if event::poll(Duration::from_millis(5)).unwrap_or(false) {
                 if let Ok(Event::Key(key)) = event::read() {
                     let mut shared = shared.lock().unwrap();
                     shared.handle_key_event(key);
-                    if shared.quit_requested {
-                        break;
-                    }
                 }
             }
         }

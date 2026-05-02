@@ -26,6 +26,15 @@ impl Color {
         (0.299 * self.r as f32 + 0.587 * self.g as f32 + 0.114 * self.b as f32) / 255.0
     }
 
+    /// Linearly interpolate between two colors.
+    #[inline]
+    pub fn lerp(self, other: Color, t: f32) -> Color {
+        Color {
+            r: (self.r as f32 + (other.r as f32 - self.r as f32) * t) as u8,
+            g: (self.g as f32 + (other.g as f32 - self.g as f32) * t) as u8,
+            b: (self.b as f32 + (other.b as f32 - self.b as f32) * t) as u8,
+        }
+    }
 }
 
 /// Software framebuffer with color and depth.
@@ -58,9 +67,22 @@ impl Framebuffer {
         self.depth.resize(size, f32::INFINITY);
     }
 
+    #[allow(dead_code)]
     pub fn clear(&mut self, sky_color: Color) {
         self.color.fill(sky_color);
         self.depth.fill(f32::INFINITY);
+    }
+
+    /// Clear with a vertical gradient from zenith (top) to horizon (bottom).
+    pub fn clear_gradient(&mut self, zenith: Color, horizon: Color) {
+        self.depth.fill(f32::INFINITY);
+        for y in 0..self.height {
+            let t = y as f32 / self.height.max(1) as f32;
+            let row_color = zenith.lerp(horizon, t);
+            let start = (y * self.width) as usize;
+            let end = start + self.width as usize;
+            self.color[start..end].fill(row_color);
+        }
     }
 
     #[inline]

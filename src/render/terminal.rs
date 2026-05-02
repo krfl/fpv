@@ -24,16 +24,36 @@ impl RenderMode {
         }
     }
 
-    pub fn toggle(self) -> Self {
+    pub fn toggle(self, kitty_supported: bool) -> Self {
         match self {
-            RenderMode::HalfBlock => RenderMode::Kitty,
+            RenderMode::HalfBlock => {
+                if kitty_supported { RenderMode::Kitty } else { RenderMode::HalfBlock }
+            }
             RenderMode::Kitty => RenderMode::HalfBlock,
         }
     }
-
 }
 
-/// Widget that renders a Framebuffer to the terminal (halfblock/braille only).
+/// Detect if the terminal supports the Kitty graphics protocol via env vars.
+pub fn detect_kitty_support() -> bool {
+    if let Ok(term) = std::env::var("TERM") {
+        if term.contains("kitty") {
+            return true;
+        }
+    }
+    if let Ok(prog) = std::env::var("TERM_PROGRAM") {
+        let prog_lower = prog.to_lowercase();
+        if prog_lower.contains("wezterm")
+            || prog_lower.contains("ghostty")
+            || prog_lower.contains("kitty")
+        {
+            return true;
+        }
+    }
+    false
+}
+
+/// Widget that renders a Framebuffer to the terminal.
 pub struct FpvView<'a> {
     pub framebuffer: &'a Framebuffer,
     pub mode: RenderMode,
@@ -43,7 +63,7 @@ impl Widget for FpvView<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         match self.mode {
             RenderMode::HalfBlock => render_halfblock(self.framebuffer, area, buf),
-            RenderMode::Kitty => {} // handled separately, not through ratatui
+            RenderMode::Kitty => {} // handled separately
         }
     }
 }
