@@ -410,6 +410,28 @@ fn render_pixel_hud(
     let sx = w - spd_str.len() as i32 * char_w - pad;
     font::draw_string(fb, &spd_str, sx, bot_y, yellow, bg, scale);
 
+    // Crosshair (center of screen)
+    let cx = w / 2;
+    let cy = h / 2;
+    let arm = (4 * px_w as i32).max(3); // length of each arm
+    let gap = (2 * px_w as i32).max(1); // gap in the center
+    let crosshair_color = Color::new(255, 255, 255);
+
+    // Horizontal arms
+    for x in (cx - arm - gap)..=(cx - gap) {
+        if x >= 0 && x < w { fb.color[(cy * w + x) as usize] = crosshair_color; }
+    }
+    for x in (cx + gap)..=(cx + arm + gap) {
+        if x >= 0 && x < w { fb.color[(cy * w + x) as usize] = crosshair_color; }
+    }
+    // Vertical arms
+    for y in (cy - arm - gap)..=(cy - gap) {
+        if y >= 0 && y < h { fb.color[(y * w + cx) as usize] = crosshair_color; }
+    }
+    for y in (cy + gap)..=(cy + arm + gap) {
+        if y >= 0 && y < h { fb.color[(y * w + cx) as usize] = crosshair_color; }
+    }
+
     // Crashed indicator
     if drone.crashed {
         let msg = "CRASHED - PRESS R";
