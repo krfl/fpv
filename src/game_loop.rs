@@ -270,7 +270,7 @@ fn handle_axis_mapping_input(app: &mut App) {
             if let Some(axis) = gp.detect_axis() {
                 if let Some(ref mut gp) = app.gamepad {
                     gp.mapping.get_mut(app.axis_map_selection).axis = axis;
-                    gp.mapping.save();
+                    gp.mapping.save(&gp.name);
                 }
                 app.axis_map_listening = false;
             }
@@ -301,7 +301,7 @@ fn handle_axis_mapping_input(app: &mut App) {
         if let Some(ref mut gp) = app.gamepad {
             let a = gp.mapping.get_mut(app.axis_map_selection);
             a.inverted = !a.inverted;
-            gp.mapping.save();
+            gp.mapping.save(&gp.name);
         }
     }
 }

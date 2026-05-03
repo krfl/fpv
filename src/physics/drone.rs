@@ -21,11 +21,11 @@ pub struct DroneConfig {
 impl Default for DroneConfig {
     fn default() -> Self {
         Self {
-            mass: 0.150,
-            max_thrust: 4.8,
-            drag_coeff: 0.6,   // less drag = higher top speed
+            mass: 0.030,       // 30g tinywhoop
+            max_thrust: 1.5,   // ~20% throttle to hover, tamer for small courses
+            drag_coeff: 0.04,  // tuned: freefall ~16m/s, full thrust ~36m/s
             angular_drag_coeff: 0.04,
-            rate_tracking_speed: 25.0, // snappier rate tracking
+            rate_tracking_speed: 25.0,
             camera_tilt_deg: 30.0,
             max_rate_deg_s: 250.0, // faster flips and rolls
             rc_rate: 0.9,
@@ -92,8 +92,9 @@ pub fn physics_step(state: &mut DroneState, config: &DroneConfig, sticks: &Stick
     let thrust_body = Vector3::new(0.0, thrust_magnitude, 0.0);
     let thrust_world = state.orientation * thrust_body;
 
-    // Linear acceleration: thrust + gravity + drag
-    let drag = -state.velocity * config.drag_coeff;
+    // Quadratic drag: F = -k * v * |v| (realistic air resistance)
+    let speed = state.velocity.norm();
+    let drag = -state.velocity * config.drag_coeff * speed;
     let acceleration = thrust_world / config.mass + GRAVITY + drag;
 
     // Semi-implicit Euler

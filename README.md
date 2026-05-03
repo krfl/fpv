@@ -56,6 +56,10 @@ cargo run --release
 
 **Kitty Graphics Protocol** — sends real pixel data to the terminal. Double-buffered for flicker-free rendering. Auto-selected when running in [Kitty](https://sw.kovidgoyal.net/kitty/), [WezTerm](https://wezfurlong.org/wezterm/), or [Ghostty](https://ghostty.org/). Reduce your terminal font size for higher resolution.
 
+## Music
+
+Music crafted specifically for this game.
+
 ## Dependencies
 
 - [ratatui](https://ratatui.rs/) + [crossterm](https://docs.rs/crossterm/) — terminal UI

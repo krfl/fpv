@@ -39,9 +39,6 @@ fn config_path() -> PathBuf {
     path
 }
 
-fn config_file() -> PathBuf {
-    config_path().join("axes.conf")
-}
 
 fn dirs_home() -> Option<PathBuf> {
     std::env::var_os("HOME")
@@ -90,8 +87,8 @@ impl AxisMapping {
         }
     }
 
-    /// Save axis mapping to config file.
-    pub fn save(&self) {
+    /// Save axis mapping for a specific controller.
+    pub fn save(&self, controller_name: &str) {
         let dir = config_path();
         let _ = fs::create_dir_all(&dir);
 
@@ -103,12 +100,15 @@ impl AxisMapping {
             axis_to_str(&self.roll.axis), self.roll.inverted,
         );
 
-        let _ = fs::write(config_file(), content);
+        let safe_name = sanitize_filename(controller_name);
+        let _ = fs::write(config_path().join(format!("{}.conf", safe_name)), content);
     }
 
-    /// Load axis mapping from config file. Returns default if not found.
-    pub fn load() -> Self {
-        let content = match fs::read_to_string(config_file()) {
+    /// Load axis mapping for a specific controller. Returns default if not found.
+    pub fn load(controller_name: &str) -> Self {
+        let safe_name = sanitize_filename(controller_name);
+        let path = config_path().join(format!("{}.conf", safe_name));
+        let content = match fs::read_to_string(path) {
             Ok(c) => c,
             Err(_) => return Self::default(),
         };
@@ -133,6 +133,13 @@ impl AxisMapping {
 
         mapping
     }
+}
+
+/// Sanitize controller name for use as a filename.
+fn sanitize_filename(name: &str) -> String {
+    name.chars()
+        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' || c == ' ' { c } else { '_' })
+        .collect()
 }
 
 /// All axes we check when listening for stick input.
@@ -170,12 +177,14 @@ impl GamepadInput {
             name = gamepad.name().to_string();
         }
 
+        let mapping = if connected { AxisMapping::load(&name) } else { AxisMapping::default() };
+
         Some(Self {
             gilrs,
             connected,
             name,
             sticks: StickState::default(),
-            mapping: AxisMapping::load(),
+            mapping,
             live_axes: HashMap::new(),
         })
     }
@@ -194,6 +203,8 @@ impl GamepadInput {
                     let gp = self.gilrs.gamepad(event.id);
                     self.connected = true;
                     self.name = gp.name().to_string();
+                    self.mapping = AxisMapping::load(&self.name);
+                    self.live_axes.clear();
                 }
                 EventType::Disconnected => {
                     self.connected = false;
